@@ -50,8 +50,14 @@ export function useDocuments({ limit = 20 } = {}) {
   }, [limit]);
 
   useEffect(() => {
-    refresh();
-    return () => abortRef.current?.abort?.();
+    const timeoutId = setTimeout(() => {
+      refresh();
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+      abortRef.current?.abort?.();
+    };
   }, [refresh]);
 
   const remove = useCallback(async (documentId) => {

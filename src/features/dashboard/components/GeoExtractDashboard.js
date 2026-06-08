@@ -1,26 +1,19 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
   Download,
   FileText,
-  History,
-  LayoutDashboard,
-  LogOut,
   RefreshCcw,
-  Settings,
-  Shield,
-  Satellite,
   Sparkles,
   Trash2,
   TriangleAlert,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/ui/Button";
+import { DashboardShell } from "@/features/dashboard/components/DashboardShell";
 import { usePdfQueue } from "@/features/ingestion/hooks/usePdfQueue";
 import { useDocuments } from "@/features/dashboard/hooks/useDocuments";
 
@@ -29,10 +22,9 @@ const GEMINI_MODEL_UI =
 
 export function GeoExtractDashboard({ user, view = "main" }) {
   const isHistory = view === "history";
-  const pathname = usePathname();
-  const router = useRouter();
   const queue = usePdfQueue({ maxFiles: 500, concurrency: 1 });
   const docs = useDocuments({ limit: 20 });
+  const { refresh } = docs;
   const [csvError, setCsvError] = useState("");
 
   const stats = useMemo(() => {
@@ -57,7 +49,7 @@ export function GeoExtractDashboard({ user, view = "main" }) {
             filename: it.name,
             status: "completed",
             rows_count: it.result?.rowsInserted ?? null,
-            created_at: new Date(it.finishedAt ?? Date.now()).toISOString(),
+            created_at: toIsoDate(it.finishedAt ?? it.startedAt ?? it.addedAt),
             error_message: "",
           });
         }
@@ -69,7 +61,7 @@ export function GeoExtractDashboard({ user, view = "main" }) {
         filename: it.name,
         status: qStatus,
         rows_count: null,
-        created_at: new Date(it.startedAt ?? it.addedAt ?? Date.now()).toISOString(),
+        created_at: toIsoDate(it.startedAt ?? it.addedAt),
         error_message: it.message ?? "",
       });
     }
@@ -90,17 +82,8 @@ export function GeoExtractDashboard({ user, view = "main" }) {
     if (lastRefreshKeyRef.current === refreshKey) return;
     lastRefreshKeyRef.current = refreshKey;
     if (!refreshKey) return;
-    docs.refresh();
-  }, [docs.refresh, refreshKey]);
-
-  async function onLogout() {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } finally {
-      router.replace("/login");
-      router.refresh();
-    }
-  }
+    refresh();
+  }, [refresh, refreshKey]);
 
   async function downloadCsv({ documentId, filename }) {
     setCsvError("");
@@ -139,99 +122,16 @@ export function GeoExtractDashboard({ user, view = "main" }) {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-0px)] w-full bg-slate-50 text-slate-900 transition-colors duration-300 dark:bg-slate-900 dark:text-white">
-      <aside className="hidden w-72 shrink-0 border-r border-slate-200/70 bg-white transition-colors duration-300 dark:border-slate-700/50 dark:bg-slate-800 lg:flex lg:flex-col">
-        <div className="flex items-center gap-3 px-6 py-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white">
-            <Satellite className="h-5 w-5" />
-          </div>
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold">GeoExtract Pro</span>
-            <span className="text-xs text-slate-500 dark:text-slate-300/80">
-              Topografía corporativa
-            </span>
-          </div>
-        </div>
-
-        <nav className="px-3">
-          <SidebarLink
-            href="/dashboard"
-            icon={LayoutDashboard}
-            label="Panel Principal"
-            active={pathname === "/dashboard"}
-          />
-          <SidebarLink
-            href="/dashboard/history"
-            icon={History}
-            label="Historial de PDFs"
-            active={pathname === "/dashboard/history"}
-          />
-          <SidebarLink
-            href="/dashboard/settings"
-            icon={Settings}
-            label="Configuración"
-            active={pathname === "/dashboard/settings"}
-          />
-        </nav>
-
-        <div className="mt-auto px-4 pb-5">
-          <div className="rounded-2xl border border-slate-200/70 bg-slate-50 p-4 transition-colors duration-300 dark:border-slate-700/50 dark:bg-slate-900/40">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white transition-colors duration-300 dark:bg-white dark:text-slate-900">
-                <Shield className="h-5 w-5" />
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-sm font-semibold">{user?.name ?? "Usuario"}</span>
-                <span className="truncate text-xs text-slate-600 dark:text-slate-300/80">
-                  {user?.email ?? "—"}
-                </span>
-                <span className="mt-2 inline-flex w-fit items-center gap-1 rounded-full bg-blue-600/10 px-2 py-1 text-xs font-semibold text-blue-700 transition-colors duration-300 dark:text-blue-200">
-                  <Shield className="h-3 w-3" />
-                  {user?.role ?? "Administrador"}
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={onLogout}
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition-colors duration-300 hover:bg-slate-50 dark:border-slate-700/50 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700/40"
-            >
-              <LogOut className="h-4 w-4" />
-              Cerrar Sesión
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <main className="flex flex-1 flex-col">
-        <header className="border-b border-slate-200/70 bg-white px-4 py-4 transition-colors duration-300 dark:border-slate-700/50 dark:bg-slate-800">
-          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-            <div className="flex flex-col">
-              <h1 className="text-base font-semibold">
-                {isHistory ? "Historial de Documentos" : "Panel Principal"}
-              </h1>
-              <p className="text-sm text-slate-600 transition-colors duration-300 dark:text-slate-300/80">
-                {isHistory
-                  ? "Revisa, descarga CSV o elimina documentos procesados."
-                  : "Carga PDFs, procesa con Gemini y exporta a CSV."}
-              </p>
-            </div>
-
-            <div className="hidden items-center gap-2 sm:flex">
-              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 transition-colors duration-300 dark:border-slate-700/50 dark:bg-slate-900/40 dark:text-slate-200">
-                <Sparkles className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                Operacional / {GEMINI_MODEL_UI}
-              </span>
-            </div>
-          </div>
-        </header>
-
-        <div
-          className={[
-            isHistory ? "flex w-full flex-1 flex-col gap-6 px-4 py-6" : "mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6",
-          ].join(" ")}
-        >
+    <DashboardShell
+      user={user}
+      title={isHistory ? "Historial de Documentos" : "Extraccion PDF"}
+      description={
+        isHistory
+          ? "Revisa, descarga CSV o elimina documentos procesados."
+          : "Carga PDFs, procesa con Gemini y exporta a CSV."
+      }
+      maxWidth={isHistory ? "" : "max-w-7xl"}
+    >
           {isHistory ? null : (
             <section className="grid gap-4 lg:grid-cols-12">
               <div className="lg:col-span-7">
@@ -298,26 +198,7 @@ export function GeoExtractDashboard({ user, view = "main" }) {
               onDownload={downloadCsv}
             />
           </section>
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function SidebarLink({ href, icon: Icon, label, active }) {
-  return (
-    <Link
-      href={href}
-      className={[
-        "flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors duration-300",
-        active
-          ? "bg-blue-600 text-white"
-          : "text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700/40",
-      ].join(" ")}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </Link>
+    </DashboardShell>
   );
 }
 
@@ -595,4 +476,9 @@ function formatDateTime(ts) {
   } catch {
     return new Date(ts).toLocaleString();
   }
+}
+
+function toIsoDate(value) {
+  if (!value) return "";
+  return new Date(value).toISOString();
 }
