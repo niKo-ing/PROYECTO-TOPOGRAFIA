@@ -27,6 +27,13 @@ export async function GET(request) {
     return NextResponse.json({ error: "Error listando documentos" }, { status: 500 });
   }
 
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[documents] list", {
+      email: session.email,
+      limit,
+      count: Array.isArray(data) ? data.length : 0,
+    });
+  }
+
   return NextResponse.json({ documents: data ?? [] }, { status: 200 });
 }
-

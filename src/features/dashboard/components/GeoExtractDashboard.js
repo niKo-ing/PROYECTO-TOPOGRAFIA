@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  CheckCircle2,
+  Clock3,
   Download,
   FileText,
   History,
@@ -16,6 +18,7 @@ import {
   Sparkles,
   Trash2,
   TriangleAlert,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/ui/Button";
 import { usePdfQueue } from "@/features/ingestion/hooks/usePdfQueue";
@@ -36,12 +39,51 @@ export function GeoExtractDashboard({ user, view = "main" }) {
     return docs.stats;
   }, [docs.stats]);
 
+  const recentItems = useMemo(() => {
+    const serverDocs = Array.isArray(docs.documents) ? docs.documents : [];
+    if (isHistory) return serverDocs;
+
+    const byId = new Map(serverDocs.map((d) => [String(d.id), d]));
+    const merged = [...serverDocs];
+
+    for (const it of queue.items) {
+      const qStatus = String(it?.status ?? "");
+
+      if (qStatus === "completed" && it?.result?.documentId) {
+        const id = String(it.result.documentId);
+        if (!byId.has(id)) {
+          merged.push({
+            id,
+            filename: it.name,
+            status: "completed",
+            rows_count: it.result?.rowsInserted ?? null,
+            created_at: new Date(it.finishedAt ?? Date.now()).toISOString(),
+            error_message: "",
+          });
+        }
+        continue;
+      }
+
+      merged.push({
+        id: `local-${it.id}`,
+        filename: it.name,
+        status: qStatus,
+        rows_count: null,
+        created_at: new Date(it.startedAt ?? it.addedAt ?? Date.now()).toISOString(),
+        error_message: it.message ?? "",
+      });
+    }
+
+    return merged;
+  }, [docs.documents, isHistory, queue.items]);
+
   const refreshKey = useMemo(() => {
+    const processingCount = queue.items.filter((i) => i.status === "processing").length;
     const completedIds = queue.items
       .filter((i) => i.status === "completed" && i.result?.documentId)
       .map((i) => i.result.documentId)
       .join(",");
-    return `${queue.items.length}:${completedIds}`;
+    return `${queue.items.length}:${processingCount}:${completedIds}`;
   }, [queue.items]);
   const lastRefreshKeyRef = useRef("");
   useEffect(() => {
@@ -49,7 +91,7 @@ export function GeoExtractDashboard({ user, view = "main" }) {
     lastRefreshKeyRef.current = refreshKey;
     if (!refreshKey) return;
     docs.refresh();
-  }, [docs, refreshKey]);
+  }, [docs.refresh, refreshKey]);
 
   async function onLogout() {
     try {
@@ -226,9 +268,10 @@ export function GeoExtractDashboard({ user, view = "main" }) {
               <button
                 type="button"
                 onClick={() => docs.refresh()}
+                disabled={docs.status === "loading"}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 transition-colors duration-300 hover:bg-slate-50 dark:border-slate-700/50 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700/40"
               >
-                <RefreshCcw className="h-4 w-4" />
+                <RefreshCcw className={["h-4 w-4", docs.status === "loading" ? "animate-spin" : ""].join(" ")} />
                 Actualizar
               </button>
             </div>
@@ -250,7 +293,7 @@ export function GeoExtractDashboard({ user, view = "main" }) {
             ) : null}
 
             <RecentTable
-              items={docs.documents}
+              items={recentItems}
               onDelete={(id) => docs.remove(id)}
               onDownload={downloadCsv}
             />
@@ -313,6 +356,8 @@ function DropzoneCard({ disabled, onFiles, onProcess, fileCount }) {
 }
 
 function PdfDropArea({ disabled, onFiles }) {
+  const [isDragging, setIsDragging] = useState(false);
+
   return (
     <label className="mt-5 block">
       <input
@@ -330,14 +375,32 @@ function PdfDropArea({ disabled, onFiles }) {
 
       <div
         className={[
-          "group rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-colors duration-300",
-          "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/40",
-          "dark:border-slate-700/50 dark:bg-slate-900/40 dark:hover:border-blue-400/70 dark:hover:bg-blue-500/10",
+          "group rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-all duration-200",
+          isDragging
+            ? "border-blue-500 bg-blue-600/10 scale-[1.01]"
+            : [
+                "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/40",
+                "dark:border-slate-700/50 dark:bg-slate-900/40 dark:hover:border-blue-400/70 dark:hover:bg-blue-500/10",
+              ].join(" "),
           disabled ? "opacity-60" : "cursor-pointer",
         ].join(" ")}
-        onDragOver={(e) => e.preventDefault()}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          if (disabled) return;
+          setIsDragging(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (disabled) return;
+          setIsDragging(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          setIsDragging(false);
+        }}
         onDrop={(e) => {
           e.preventDefault();
+          setIsDragging(false);
           if (disabled) return;
           const files = e.dataTransfer?.files;
           if (files?.length) onFiles(files);
@@ -383,6 +446,14 @@ function SystemCard() {
 }
 
 function RecentTable({ items, onDelete, onDownload }) {
+  const sortedItems = useMemo(() => {
+    return [...(items ?? [])].sort((a, b) => {
+      const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+      return tb - ta;
+    });
+  }, [items]);
+
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[820px] text-left text-sm">
@@ -398,7 +469,7 @@ function RecentTable({ items, onDelete, onDownload }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200/70 transition-colors duration-300 dark:divide-slate-700/50">
-          {items.length === 0 ? (
+          {sortedItems.length === 0 ? (
             <tr>
               <td
                 className="px-5 py-8 text-slate-600 transition-colors duration-300 dark:text-slate-300/80"
@@ -408,7 +479,7 @@ function RecentTable({ items, onDelete, onDownload }) {
               </td>
             </tr>
           ) : (
-            items.map((it) => (
+            sortedItems.map((it) => (
               <tr key={it.id} className="align-top">
                 <td className="px-5 py-4">
                   <div className="flex flex-col">
@@ -436,7 +507,7 @@ function RecentTable({ items, onDelete, onDownload }) {
                 </td>
                 <td className="sticky right-0 px-5 py-4 text-right bg-white border-l border-slate-200/70 transition-colors duration-300 dark:bg-slate-800 dark:border-slate-700/50">
                   <div className="flex flex-wrap items-center justify-end gap-2 whitespace-nowrap">
-                    {it.status === "completed" ? (
+                    {it.status === "completed" && !String(it.id).startsWith("local-") ? (
                       <button
                         type="button"
                         onClick={async () => {
@@ -460,14 +531,16 @@ function RecentTable({ items, onDelete, onDownload }) {
                       </span>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => onDelete(it.id)}
-                      className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-900 transition-colors duration-300 hover:bg-slate-50 dark:border-slate-700/50 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700/40"
-                      aria-label="Eliminar"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {String(it.id).startsWith("local-") ? null : (
+                      <button
+                        type="button"
+                        onClick={() => onDelete(it.id)}
+                        className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-900 transition-colors duration-300 hover:bg-slate-50 dark:border-slate-700/50 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700/40"
+                        aria-label="Eliminar"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -483,13 +556,28 @@ function StatusBadge({ status }) {
   const base =
     "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold transition-colors duration-300";
   if (status === "completed") {
-    return <span className={`${base} bg-emerald-600/10 text-emerald-700 dark:text-emerald-200`}>Completado</span>;
+    return (
+      <span className={`${base} gap-1 bg-emerald-600/10 text-emerald-700 dark:text-emerald-200`}>
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        Completado
+      </span>
+    );
   }
   if (status === "processing") {
-    return <span className={`${base} bg-amber-500/15 text-amber-800 dark:text-amber-200`}>Procesando</span>;
+    return (
+      <span className={`${base} gap-1 bg-amber-500/15 text-amber-800 dark:text-amber-200`}>
+        <Clock3 className="h-3.5 w-3.5" />
+        Procesando
+      </span>
+    );
   }
   if (status === "error") {
-    return <span className={`${base} bg-red-600/10 text-red-700 dark:text-red-200`}>Error</span>;
+    return (
+      <span className={`${base} gap-1 bg-red-600/10 text-red-700 dark:text-red-200`}>
+        <XCircle className="h-3.5 w-3.5" />
+        Error
+      </span>
+    );
   }
   return <span className={`${base} bg-slate-200/70 text-slate-700 dark:bg-slate-900/40 dark:text-slate-200`}>En cola</span>;
 }

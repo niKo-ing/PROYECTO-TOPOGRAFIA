@@ -1,10 +1,9 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { getSessionFromCookieStore } from "@/shared/lib/auth/session";
 import { getSupabaseAdmin } from "@/shared/lib/supabase/admin";
-import { extractCoordenadasFromText } from "@/shared/lib/gemini/extractCoordenadas";
+import { extractCoordenadasFromPdf } from "@/shared/lib/gemini/extractCoordenadas";
 import { coordinatesToCsv } from "@/shared/lib/csv/toCsv";
 import { sendCoordinatesCsvEmail } from "@/shared/lib/email/resend";
 
@@ -12,6 +11,13 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request) {
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[process-pdf] Request received", {
+      method: request.method,
+      contentType: request.headers.get("content-type"),
+    });
+  }
+
   const cookieStore = await cookies();
   const session = getSessionFromCookieStore(cookieStore);
   if (!session) {
@@ -25,6 +31,14 @@ export async function POST(request) {
   try {
     const formData = await request.formData();
     const file = formData.get("file");
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[process-pdf] Archivo recibido:", file);
+      console.log("[process-pdf] file meta:", {
+        name: file && typeof file === "object" ? file.name : null,
+        type: file && typeof file === "object" ? file.type : null,
+        size: file && typeof file === "object" ? file.size : null,
+      });
+    }
 
     if (!file || typeof file === "string") {
       return NextResponse.json({ error: "PDF requerido (field: file)" }, { status: 400 });
@@ -60,31 +74,8 @@ export async function POST(request) {
     }
 
     const pdfBuffer = Buffer.from(new Uint8Array(arrayBuffer));
-
-    let extractedText = "";
-    try {
-      const parsed = await pdfParse(pdfBuffer);
-      extractedText = String(parsed?.text ?? "").trim();
-    } catch (error) {
-      await supabase
-        .from("documents")
-        .update({
-          status: "error",
-          error_message: error instanceof Error ? error.message : "pdf-parse falló leyendo el PDF",
-        })
-        .eq("id", documentId);
-      return NextResponse.json({ error: "No se pudo leer el PDF" }, { status: 422 });
-    }
-
-    if (!extractedText) {
-      await supabase
-        .from("documents")
-        .update({ status: "error", error_message: "Texto extraído vacío" })
-        .eq("id", documentId);
-      return NextResponse.json({ error: "No se pudo extraer texto del PDF" }, { status: 422 });
-    }
-
-    const rows = await extractCoordenadasFromText({ extractedText });
+    const pdfBase64 = pdfBuffer.toString("base64");
+    const rows = await extractCoordenadasFromPdf({ pdfBase64 });
 
     const rowsToInsert = rows.map((r) => ({
       document_id: documentId,

@@ -23,6 +23,9 @@ export function useDocuments({ limit = 20 } = {}) {
       });
 
       const payload = await res.json().catch(() => null);
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Datos recibidos del servidor:", payload);
+      }
       if (!res.ok) {
         const msg = payload?.error ?? `Error cargando documentos (HTTP ${res.status})`;
         setStatus("error");
@@ -30,7 +33,14 @@ export function useDocuments({ limit = 20 } = {}) {
         return;
       }
 
-      setDocuments(Array.isArray(payload?.documents) ? payload.documents : []);
+      const nextDocs = Array.isArray(payload?.documents)
+        ? payload.documents
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload)
+            ? payload
+            : [];
+      setDocuments(nextDocs);
       setStatus("idle");
     } catch (e) {
       if (e?.name === "AbortError") return;
@@ -72,4 +82,3 @@ export function useDocuments({ limit = 20 } = {}) {
 
   return { documents, status, error, refresh, remove, stats };
 }
-

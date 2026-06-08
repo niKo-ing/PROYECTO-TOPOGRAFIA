@@ -2,6 +2,9 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 
+const scheduleMicrotask =
+  typeof queueMicrotask === "function" ? queueMicrotask : (fn) => Promise.resolve().then(fn);
+
 export function usePdfQueue({ maxFiles = 500, concurrency = 1 } = {}) {
   const [items, setItems] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -45,7 +48,11 @@ export function usePdfQueue({ maxFiles = 500, concurrency = 1 } = {}) {
           message: "",
           result: null,
         }));
-        return [...prev, ...nextItems];
+        const merged = [...prev, ...nextItems];
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[queue] enqueued", { added: nextItems.length, total: merged.length });
+        }
+        return merged;
       });
     },
     [maxFiles],
@@ -73,12 +80,30 @@ export function usePdfQueue({ maxFiles = 500, concurrency = 1 } = {}) {
     const form = new FormData();
     form.append("file", item.file, item.name);
 
-    const res = await fetch("/api/process-pdf", { method: "POST", body: form });
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[processOne] Enviando FormData a /api/process-pdf");
+      for (const [key, value] of form.entries()) {
+        console.log("[processOne] formData:", key, value);
+      }
+    }
+
+    const res = await fetch("/api/process-pdf", {
+      method: "POST",
+      body: form,
+      credentials: "include",
+      cache: "no-store",
+    });
     const data = await res.json().catch(() => null);
 
     if (!res.ok) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[processOne] response error", { status: res.status, data });
+      }
       const errMsg = data?.error ?? "Error procesando PDF";
       throw new Error(errMsg);
+    }
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[processOne] response ok", data);
     }
     return data;
   }, []);
@@ -94,7 +119,7 @@ export function usePdfQueue({ maxFiles = 500, concurrency = 1 } = {}) {
       if (nextIndex === -1) {
         if (inFlightRef.current === 0) {
           loopActiveRef.current = false;
-          queueMicrotask(() => setIsRunning(false));
+          scheduleMicrotask(() => setIsRunning(false));
         }
         return prev;
       }
@@ -104,8 +129,11 @@ export function usePdfQueue({ maxFiles = 500, concurrency = 1 } = {}) {
       updated[nextIndex] = { ...next, status: "processing", message: "", startedAt: Date.now() };
 
       inFlightRef.current += 1;
-      queueMicrotask(async () => {
+      scheduleMicrotask(async () => {
         try {
+          if (process.env.NODE_ENV !== "production") {
+            console.log("[queue] processing:", { id: next.id, name: next.name, size: next.size });
+          }
           const result = await processOne(next);
           setItems((p) =>
             p.map((it) =>
@@ -133,12 +161,15 @@ export function usePdfQueue({ maxFiles = 500, concurrency = 1 } = {}) {
         }
       });
 
-      queueMicrotask(() => tick());
+      scheduleMicrotask(() => tick());
       return updated;
     });
   }, [concurrency, processOne]);
 
   const start = useCallback(() => {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[queue] start clicked");
+    }
     if (loopActiveRef.current) {
       isRunningRef.current = true;
       setIsRunning(true);
